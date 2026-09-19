@@ -65,6 +65,21 @@ function conductor_tmux_prefix(): string {
     return conductor_config_get('CONDUCTOR_TMUX_PREFIX', 'HDS');
 }
 
+/**
+ * URL path the app is mounted under, e.g. "/conductor/" when reverse-proxied at
+ * a sub-path (Tailscale serve --set-path). Emitted as a <base> tag so the app's
+ * relative links resolve correctly regardless of trailing slash. Empty (default)
+ * means mounted at the site root, no <base> tag. Always normalized to a leading
+ * and trailing slash.
+ */
+function conductor_base_path(): string {
+    $p = trim(conductor_config_get('CONDUCTOR_BASE_PATH', ''));
+    if ($p === '' || $p === '/') return '';
+    if ($p[0] !== '/') $p = '/' . $p;
+    if (substr($p, -1) !== '/') $p .= '/';
+    return $p;
+}
+
 function require_auth(): void {
     $user = conductor_config_get('CONDUCTOR_USER');
     $pass = conductor_config_get('CONDUCTOR_PASS');
@@ -210,8 +225,10 @@ function find_pending_prompts(array $registry, array $running): array {
 }
 
 function render_header(string $title): void {
+    $basePath = conductor_base_path();
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        . ($basePath !== '' ? '<base href="' . h($basePath) . '">' : '')
         . '<title>' . h($title) . ' - Conductor</title><style>'
         . 'body{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;padding:16px;background:#111;color:#eee}'
         . 'a{color:#7ab8ff}'

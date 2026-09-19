@@ -68,11 +68,17 @@ tmux names), not code.
    `tmux`, `claude`, `git`, and `gh`. Not root.
 
 5. **Private exposure.** The service binds to `127.0.0.1` only. Put it behind
-   Tailscale (or another private reverse proxy). With Tailscale serve, alongside
-   an existing ttyd mapping:
+   Tailscale (or another private reverse proxy). Give it its own HTTPS port at
+   the root, so its relative links work cleanly:
    ```bash
-   sudo tailscale serve --bg --set-path /conductor 7682
+   sudo tailscale serve --bg --https=8443 http://127.0.0.1:7682
+   # -> https://<node>.<tailnet>.ts.net:8443/
    ```
+   Do **not** use `tailscale serve --set-path /conductor`: that registers an
+   exact path, not a subtree, so only the bare `/conductor` URL resolves and
+   every sub-page (`/conductor/project.php`, etc.) 404s. If you must mount under
+   a sub-path, use a reverse proxy that forwards the whole subtree (nginx
+   `location /conductor/ { proxy_pass ...; }`) and set `CONDUCTOR_BASE_PATH`.
 
 ## Requirements on the target server
 

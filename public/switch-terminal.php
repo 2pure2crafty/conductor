@@ -23,5 +23,5 @@ if (!tmux_session_exists($ttydSession)) {
 exec('nohup bash ' . escapeshellarg(SWITCH_TERMINAL_SCRIPT) . ' ' . escapeshellarg($ttydSession)
     . ' ' . escapeshellarg($agent['tmux']) . ' > /dev/null 2>&1 &');
 
-header('Location: /');
+header('Location: index.php');
 exit;
