@@ -1,15 +1,44 @@
 # Conductor
 
-A small private PHP app for spinning up and wrapping down Claude Code agent
-sessions from a phone browser, instead of leaving them running 24/7. It shows a
-dashboard of projects and agents, spins up an agent (existing or brand new) into
-a tmux session running `claude`, auto-sends `/remote-control` so you continue in
-the Claude mobile app, and wraps agents back down with `/wrap-up` (which writes a
-`SESSION.md` handoff) before killing the session. Persistent *information*, not
-persistent *agents*.
+Conductor spins Claude Code agent sessions up and down on demand, driven from a
+phone browser. A small private PHP app.
 
 > **Note:** this repo is public temporarily. It will be set to private soon.
 > See `LICENSE`, no usage rights are granted while it's public.
+
+## The problem it solves
+
+Leaving a Claude Code session running 24/7 so it's there when you want it burns
+tokens while it sits idle, and it chains you to the terminal. Conductor replaces
+"always-on agents" with "on-demand agents": you open a small private web app from
+your phone, spin up the agent you want, and it hands you off to the Claude mobile
+app (via `/remote-control`) to do the actual work. When you're done, `/wrap-up`
+writes a `SESSION.md` handoff and the session is killed. The next spin-up reads
+that handoff and picks up where you left off. Persistent *information*, not
+persistent *agents*.
+
+## What it does
+
+- Dashboard of your projects and agents, each with live/stopped status.
+- A "Needs attention" section that surfaces any agent stuck on a Claude Code
+  permission prompt, with Approve / Deny buttons, plus a deep-link that switches
+  your terminal to that session if you'd rather handle it by hand.
+- Spin up an existing agent as-is, a new agent inside an existing project, or a
+  whole new project (folder, `git init`, optional GitHub repo), choosing the
+  model and permission mode per agent.
+- On spin-up the agent introduces itself: it states its name and role and, if a
+  `SESSION.md` exists, summarizes where things stand and the next step.
+- Wrap down: send `/wrap-up`, wait for the `SESSION.md` handoff to be written,
+  then kill the tmux session.
+
+## Why it's called Conductor
+
+The layer that runs a single agent (its tool loop, context, and permissions) is
+that agent's "harness"; Claude Code is the harness. Conductor sits one level
+above the harness: it starts, watches, and stops many harness sessions without
+doing the work itself, the way a conductor directs an orchestra rather than
+playing an instrument. It was briefly called "HDS Router," but it doesn't route
+anything and it's no longer HDS-specific.
 
 ## What's in the repo vs. what's per-server
 
@@ -42,13 +71,13 @@ tmux names), not code.
    Generate a strong password with `openssl rand -hex 8`.
 
    Config keys (all read at request time, no restart needed to change them):
-   - `CONDUCTOR_USER` / `CONDUCTOR_PASS` — HTTP basic-auth for the UI.
-   - `CONDUCTOR_BASE_DIR` — where new projects get created.
-   - `CONDUCTOR_READ_SCOPE` — Read glob baked into new agents' settings.json
+   - `CONDUCTOR_USER` / `CONDUCTOR_PASS`: HTTP basic-auth for the UI.
+   - `CONDUCTOR_BASE_DIR`: where new projects get created.
+   - `CONDUCTOR_READ_SCOPE`: Read glob baked into new agents' settings.json
      (defaults to `CONDUCTOR_BASE_DIR/**`).
-   - `CONDUCTOR_TTYD_SESSION` — tmux session ttyd attaches to (for the
+   - `CONDUCTOR_TTYD_SESSION`: tmux session ttyd attaches to (for the
      "Open terminal" deep-link).
-   - `CONDUCTOR_TMUX_PREFIX` — prefix for spawned tmux session names.
+   - `CONDUCTOR_TMUX_PREFIX`: prefix for spawned tmux session names.
 
 3. **Live registry.** Seed it from the template (or start empty, the app copes
    with a missing file and you add projects through the UI):
