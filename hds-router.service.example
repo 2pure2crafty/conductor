@@ -1,0 +1,28 @@
+# HDS Router systemd unit template.
+#
+#   sudo cp hds-router.service.example /etc/systemd/system/hds-router.service
+#   # edit User/Group/paths/port below to match this server, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hds-router.service
+#
+# Bind to 127.0.0.1 only. The app has no public exposure of its own; reach it
+# over Tailscale (see README) or another private reverse proxy.
+
+[Unit]
+Description=HDS Router (on-demand agent spin-up UI)
+After=network.target
+
+[Service]
+Type=simple
+# Run as the same unprivileged user that owns the agent directories and can
+# drive tmux / claude / git / gh. NOT root.
+User=change-me
+Group=change-me
+# Point ExecStart at this repo's public/ directory on the target server.
+ExecStart=/usr/bin/php -S 127.0.0.1:7682 -t /opt/hds-router/public
+Restart=on-failure
+# Optional: keep the deployment config path explicit if it isn't the default.
+#Environment=ROUTER_CONFIG=/etc/default/hds-router
+
+[Install]
+WantedBy=multi-user.target

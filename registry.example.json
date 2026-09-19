@@ -1,0 +1,19 @@
+{
+    "projects": {
+        "example-project": {
+            "label": "Example project",
+            "path": "/var/www/agents/example-project",
+            "repo": null,
+            "description": "Short description of the project. Shown on the dashboard and project page, and used as CLAUDE.md seed context for new agents created under this project.",
+            "agents": {
+                "main": {
+                    "label": "Main",
+                    "path": "main",
+                    "tmux": "HDS-example-project-main",
+                    "model": "sonnet",
+                    "permission_mode": "acceptEdits"
+                }
+            }
+        }
+    }
+}

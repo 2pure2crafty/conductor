@@ -1,24 +1,76 @@
 <?php
 declare(strict_types=1);
 
-define('ROUTER_BASE_DIR', '/var/www/hdp/agents');
-define('REGISTRY_PATH', __DIR__ . '/registry.json');
-define('WRAPUP_SKILL_SRC', '/var/www/hdp/agents/test-wrapup/.claude/skills/wrap-up/SKILL.md');
-define('SPAWN_FINISH_SCRIPT', __DIR__ . '/spawn-finish.sh');
+// Path to the deployment config file. Everything server-specific lives there,
+// not in this repo. Override with the ROUTER_CONFIG env var if you keep it
+// somewhere other than the default.
+define('ROUTER_CONFIG_FILE', getenv('ROUTER_CONFIG') ?: '/etc/default/hds-router');
 
-function require_auth(): void {
-    $configFile = '/etc/default/hds-router';
-    $user = null;
-    $pass = null;
-    if (is_readable($configFile)) {
-        foreach (file($configFile, FILE_IGNORE_NEW_LINES) as $line) {
-            if (preg_match('/^ROUTER_USER=(.*)$/', $line, $m)) $user = trim($m[1], "\"'");
-            if (preg_match('/^ROUTER_PASS=(.*)$/', $line, $m)) $pass = trim($m[1], "\"'");
+// Repo-relative paths (these ship with the code and are the same on any server).
+define('REGISTRY_PATH', __DIR__ . '/registry.json');
+define('WRAPUP_SKILL_SRC', __DIR__ . '/skills/wrap-up/SKILL.md');
+define('SPAWN_FINISH_SCRIPT', __DIR__ . '/spawn-finish.sh');
+define('SWITCH_TERMINAL_SCRIPT', __DIR__ . '/switch-terminal-finish.sh');
+
+/**
+ * Parse KEY=value lines from the deployment config file (ROUTER_CONFIG_FILE).
+ * Cached per request. Values may be quoted. Missing file returns [].
+ */
+function router_config(): array {
+    static $config = null;
+    if ($config !== null) return $config;
+    $config = [];
+    if (is_readable(ROUTER_CONFIG_FILE)) {
+        foreach (file(ROUTER_CONFIG_FILE, FILE_IGNORE_NEW_LINES) as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') continue;
+            if (preg_match('/^([A-Z_][A-Z0-9_]*)=(.*)$/', $line, $m)) {
+                $config[$m[1]] = trim($m[2], "\"'");
+            }
         }
     }
+    return $config;
+}
+
+/** Read a config value, falling back to $default if unset. */
+function router_config_get(string $key, string $default = ''): string {
+    $config = router_config();
+    return $config[$key] ?? $default;
+}
+
+/**
+ * Base directory new projects are created under. Server-specific, so it comes
+ * from the config file; falls back to a sensible default for a fresh install.
+ */
+function router_base_dir(): string {
+    return rtrim(router_config_get('ROUTER_BASE_DIR', '/var/www/agents'), '/');
+}
+
+/**
+ * Glob that scaffolded agents get Read access to (their settings.json allow
+ * list). Defaults to the base dir so agents can read across sibling projects;
+ * set ROUTER_READ_SCOPE in the config file to widen or narrow it.
+ */
+function router_read_scope(): string {
+    return router_config_get('ROUTER_READ_SCOPE', router_base_dir() . '/**');
+}
+
+/** tmux session name that ttyd attaches to (used for the "Open terminal" deep-link). */
+function router_ttyd_session(): string {
+    return router_config_get('ROUTER_TTYD_SESSION', 'hds-remote');
+}
+
+/** Prefix for spawned agents' tmux session names, e.g. "HDS" -> "HDS-project-agent". */
+function router_tmux_prefix(): string {
+    return router_config_get('ROUTER_TMUX_PREFIX', 'HDS');
+}
+
+function require_auth(): void {
+    $user = router_config_get('ROUTER_USER');
+    $pass = router_config_get('ROUTER_PASS');
     $givenUser = $_SERVER['PHP_AUTH_USER'] ?? '';
     $givenPass = $_SERVER['PHP_AUTH_PW'] ?? '';
-    $ok = $user !== null && $pass !== null
+    $ok = $user !== '' && $pass !== ''
         && hash_equals($user, $givenUser)
         && hash_equals($pass, $givenPass);
     if (!$ok) {
@@ -53,6 +105,9 @@ function path_is_within(string $path, string $base): bool {
 }
 
 function load_registry(): array {
+    if (!file_exists(REGISTRY_PATH)) {
+        return ['projects' => []];
+    }
     $fh = fopen(REGISTRY_PATH, 'r');
     flock($fh, LOCK_SH);
     $data = json_decode(stream_get_contents($fh), true);
@@ -104,9 +159,6 @@ function tmux_session_exists(string $name): bool {
     [$exit] = run_cmd(['tmux', 'has-session', '-t', $name]);
     return $exit === 0;
 }
-
-const TTYD_TMUX_SESSION = 'hds-remote';
-const SWITCH_TERMINAL_SCRIPT = __DIR__ . '/switch-terminal-finish.sh';
 
 /** Detect a pending Claude Code permission-confirmation dialog in a tmux pane. */
 function detect_pending_prompt(string $tmuxName): ?array {
@@ -207,7 +259,7 @@ function build_settings_json(string $agentDirAbs): string {
     $data = [
         'permissions' => [
             'allow' => [
-                'Read(/var/www/hdp/**)',
+                'Read(' . router_read_scope() . ')',
                 'Write(' . $agentDirAbs . '/**)',
                 'Bash(git *)',
                 'Bash(find *)',

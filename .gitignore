@@ -1,0 +1,3 @@
+# Live registry: created per-deployment from registry.example.json, holds this
+# server's real projects/agents. Not part of the shippable code.
+/registry.json

@@ -37,12 +37,13 @@ if ($isNewProject) {
         error_page('A project with slug "' . $projectSlug . '" already exists.', 'spawn-form.php');
     }
 
-    $projectPath = rtrim(ROUTER_BASE_DIR, '/') . '/' . $projectSlug;
+    $baseDir = router_base_dir();
+    $projectPath = $baseDir . '/' . $projectSlug;
     if (is_dir($projectPath)) {
         error_page('Directory already exists at ' . $projectPath . '.', 'spawn-form.php');
     }
     mkdir($projectPath, 0775, true);
-    if (!path_is_within($projectPath, ROUTER_BASE_DIR)) {
+    if (!path_is_within($projectPath, $baseDir)) {
         error_page('Refusing to continue: resolved path escaped the base directory.');
     }
 
@@ -59,7 +60,7 @@ if ($isNewProject) {
     $agentLabel = $agentName;
     scaffold_new_agent($agentDirAbs, $agentLabel, $projectDescription, $instructions);
 
-    $tmuxName = 'HDS-' . $projectSlug . '-' . $agentSlug;
+    $tmuxName = router_tmux_prefix() . '-' . $projectSlug . '-' . $agentSlug;
     $registry = update_registry(function (array $reg) use ($projectSlug, $projectName, $projectPath, $repoUrl, $projectDescription, $agentSlug, $agentLabel, $tmuxName, $model, $permissionMode) {
         $reg['projects'][$projectSlug] = [
             'label' => $projectName,
@@ -109,7 +110,7 @@ if ($agentChoice === '__new__') {
         error_page('Refusing to continue: resolved agent path escaped the project directory.');
     }
 
-    $tmuxName = 'HDS-' . $projectSlug . '-' . $agentSlug;
+    $tmuxName = router_tmux_prefix() . '-' . $projectSlug . '-' . $agentSlug;
     $registry = update_registry(function (array $reg) use ($projectSlug, $agentSlug, $agentName, $tmuxName, $model, $permissionMode) {
         $reg['projects'][$projectSlug]['agents'][$agentSlug] = [
             'label' => $agentName,
