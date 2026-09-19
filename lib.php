@@ -105,6 +105,58 @@ function tmux_session_exists(string $name): bool {
     return $exit === 0;
 }
 
+const TTYD_TMUX_SESSION = 'hds-remote';
+const SWITCH_TERMINAL_SCRIPT = __DIR__ . '/switch-terminal-finish.sh';
+
+/** Detect a pending Claude Code permission-confirmation dialog in a tmux pane. */
+function detect_pending_prompt(string $tmuxName): ?array {
+    [$exit, $stdout] = run_cmd(['tmux', 'capture-pane', '-t', $tmuxName, '-p', '-S', '-40']);
+    if ($exit !== 0) return null;
+    $lines = explode("\n", $stdout);
+
+    $escIdx = null;
+    foreach ($lines as $i => $line) {
+        if (str_contains($line, 'Esc to cancel')) $escIdx = $i;
+    }
+    if ($escIdx === null) return null;
+
+    $i = $escIdx - 1;
+    while ($i >= 0 && trim($lines[$i]) === '') $i--;
+
+    $options = [];
+    while ($i >= 0 && preg_match('/^\s*(?:\x{276f}\s*)?(\d+)\.\s*(.+?)\s*$/u', $lines[$i], $m)) {
+        array_unshift($options, trim($m[2]));
+        $i--;
+    }
+    if (empty($options)) return null;
+
+    while ($i >= 0 && trim($lines[$i]) === '') $i--;
+    $question = $i >= 0 ? trim($lines[$i]) : 'Confirmation required';
+
+    return ['question' => $question, 'options' => $options];
+}
+
+/** Scan every live agent in the registry for a pending permission prompt. */
+function find_pending_prompts(array $registry, array $running): array {
+    $found = [];
+    foreach ($registry['projects'] as $pSlug => $project) {
+        foreach ($project['agents'] as $aSlug => $agent) {
+            if (!in_array($agent['tmux'], $running, true)) continue;
+            $prompt = detect_pending_prompt($agent['tmux']);
+            if ($prompt === null) continue;
+            $found[] = [
+                'project' => $pSlug,
+                'agent' => $aSlug,
+                'projectLabel' => $project['label'],
+                'agentLabel' => $agent['label'],
+                'tmux' => $agent['tmux'],
+                'prompt' => $prompt,
+            ];
+        }
+    }
+    return $found;
+}
+
 function render_header(string $title): void {
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
