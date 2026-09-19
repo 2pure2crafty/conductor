@@ -15,7 +15,7 @@ if ($agent === null) error_page('No such agent.', 'index.php');
 if (!tmux_session_exists($agent['tmux'])) {
     error_page('Session ' . $agent['tmux'] . ' is not running.', 'index.php');
 }
-$ttydSession = router_ttyd_session();
+$ttydSession = conductor_ttyd_session();
 if (!tmux_session_exists($ttydSession)) {
     error_page('Terminal session (' . $ttydSession . ') is not running.', 'index.php');
 }

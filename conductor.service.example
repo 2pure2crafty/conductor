@@ -1,15 +1,15 @@
-# HDS Router systemd unit template.
+# Conductor systemd unit template.
 #
-#   sudo cp hds-router.service.example /etc/systemd/system/hds-router.service
+#   sudo cp conductor.service.example /etc/systemd/system/conductor.service
 #   # edit User/Group/paths/port below to match this server, then:
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now hds-router.service
+#   sudo systemctl enable --now conductor.service
 #
 # Bind to 127.0.0.1 only. The app has no public exposure of its own; reach it
 # over Tailscale (see README) or another private reverse proxy.
 
 [Unit]
-Description=HDS Router (on-demand agent spin-up UI)
+Description=Conductor (on-demand agent spin-up UI)
 After=network.target
 
 [Service]
@@ -19,10 +19,10 @@ Type=simple
 User=change-me
 Group=change-me
 # Point ExecStart at this repo's public/ directory on the target server.
-ExecStart=/usr/bin/php -S 127.0.0.1:7682 -t /opt/hds-router/public
+ExecStart=/usr/bin/php -S 127.0.0.1:7682 -t /opt/conductor/public
 Restart=on-failure
 # Optional: keep the deployment config path explicit if it isn't the default.
-#Environment=ROUTER_CONFIG=/etc/default/hds-router
+#Environment=CONDUCTOR_CONFIG=/etc/default/conductor
 
 [Install]
 WantedBy=multi-user.target

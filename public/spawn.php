@@ -37,7 +37,7 @@ if ($isNewProject) {
         error_page('A project with slug "' . $projectSlug . '" already exists.', 'spawn-form.php');
     }
 
-    $baseDir = router_base_dir();
+    $baseDir = conductor_base_dir();
     $projectPath = $baseDir . '/' . $projectSlug;
     if (is_dir($projectPath)) {
         error_page('Directory already exists at ' . $projectPath . '.', 'spawn-form.php');
@@ -60,7 +60,7 @@ if ($isNewProject) {
     $agentLabel = $agentName;
     scaffold_new_agent($agentDirAbs, $agentLabel, $projectDescription, $instructions);
 
-    $tmuxName = router_tmux_prefix() . '-' . $projectSlug . '-' . $agentSlug;
+    $tmuxName = conductor_tmux_prefix() . '-' . $projectSlug . '-' . $agentSlug;
     $registry = update_registry(function (array $reg) use ($projectSlug, $projectName, $projectPath, $repoUrl, $projectDescription, $agentSlug, $agentLabel, $tmuxName, $model, $permissionMode) {
         $reg['projects'][$projectSlug] = [
             'label' => $projectName,
@@ -110,7 +110,7 @@ if ($agentChoice === '__new__') {
         error_page('Refusing to continue: resolved agent path escaped the project directory.');
     }
 
-    $tmuxName = router_tmux_prefix() . '-' . $projectSlug . '-' . $agentSlug;
+    $tmuxName = conductor_tmux_prefix() . '-' . $projectSlug . '-' . $agentSlug;
     $registry = update_registry(function (array $reg) use ($projectSlug, $agentSlug, $agentName, $tmuxName, $model, $permissionMode) {
         $reg['projects'][$projectSlug]['agents'][$agentSlug] = [
             'label' => $agentName,

@@ -2,9 +2,9 @@
 declare(strict_types=1);
 
 // Path to the deployment config file. Everything server-specific lives there,
-// not in this repo. Override with the ROUTER_CONFIG env var if you keep it
+// not in this repo. Override with the CONDUCTOR_CONFIG env var if you keep it
 // somewhere other than the default.
-define('ROUTER_CONFIG_FILE', getenv('ROUTER_CONFIG') ?: '/etc/default/hds-router');
+define('CONDUCTOR_CONFIG_FILE', getenv('CONDUCTOR_CONFIG') ?: '/etc/default/conductor');
 
 // Repo-relative paths (these ship with the code and are the same on any server).
 define('REGISTRY_PATH', __DIR__ . '/registry.json');
@@ -13,15 +13,15 @@ define('SPAWN_FINISH_SCRIPT', __DIR__ . '/spawn-finish.sh');
 define('SWITCH_TERMINAL_SCRIPT', __DIR__ . '/switch-terminal-finish.sh');
 
 /**
- * Parse KEY=value lines from the deployment config file (ROUTER_CONFIG_FILE).
+ * Parse KEY=value lines from the deployment config file (CONDUCTOR_CONFIG_FILE).
  * Cached per request. Values may be quoted. Missing file returns [].
  */
-function router_config(): array {
+function conductor_config(): array {
     static $config = null;
     if ($config !== null) return $config;
     $config = [];
-    if (is_readable(ROUTER_CONFIG_FILE)) {
-        foreach (file(ROUTER_CONFIG_FILE, FILE_IGNORE_NEW_LINES) as $line) {
+    if (is_readable(CONDUCTOR_CONFIG_FILE)) {
+        foreach (file(CONDUCTOR_CONFIG_FILE, FILE_IGNORE_NEW_LINES) as $line) {
             $line = trim($line);
             if ($line === '' || $line[0] === '#') continue;
             if (preg_match('/^([A-Z_][A-Z0-9_]*)=(.*)$/', $line, $m)) {
@@ -33,8 +33,8 @@ function router_config(): array {
 }
 
 /** Read a config value, falling back to $default if unset. */
-function router_config_get(string $key, string $default = ''): string {
-    $config = router_config();
+function conductor_config_get(string $key, string $default = ''): string {
+    $config = conductor_config();
     return $config[$key] ?? $default;
 }
 
@@ -42,39 +42,39 @@ function router_config_get(string $key, string $default = ''): string {
  * Base directory new projects are created under. Server-specific, so it comes
  * from the config file; falls back to a sensible default for a fresh install.
  */
-function router_base_dir(): string {
-    return rtrim(router_config_get('ROUTER_BASE_DIR', '/var/www/agents'), '/');
+function conductor_base_dir(): string {
+    return rtrim(conductor_config_get('CONDUCTOR_BASE_DIR', '/var/www/agents'), '/');
 }
 
 /**
  * Glob that scaffolded agents get Read access to (their settings.json allow
  * list). Defaults to the base dir so agents can read across sibling projects;
- * set ROUTER_READ_SCOPE in the config file to widen or narrow it.
+ * set CONDUCTOR_READ_SCOPE in the config file to widen or narrow it.
  */
-function router_read_scope(): string {
-    return router_config_get('ROUTER_READ_SCOPE', router_base_dir() . '/**');
+function conductor_read_scope(): string {
+    return conductor_config_get('CONDUCTOR_READ_SCOPE', conductor_base_dir() . '/**');
 }
 
 /** tmux session name that ttyd attaches to (used for the "Open terminal" deep-link). */
-function router_ttyd_session(): string {
-    return router_config_get('ROUTER_TTYD_SESSION', 'hds-remote');
+function conductor_ttyd_session(): string {
+    return conductor_config_get('CONDUCTOR_TTYD_SESSION', 'hds-remote');
 }
 
 /** Prefix for spawned agents' tmux session names, e.g. "HDS" -> "HDS-project-agent". */
-function router_tmux_prefix(): string {
-    return router_config_get('ROUTER_TMUX_PREFIX', 'HDS');
+function conductor_tmux_prefix(): string {
+    return conductor_config_get('CONDUCTOR_TMUX_PREFIX', 'HDS');
 }
 
 function require_auth(): void {
-    $user = router_config_get('ROUTER_USER');
-    $pass = router_config_get('ROUTER_PASS');
+    $user = conductor_config_get('CONDUCTOR_USER');
+    $pass = conductor_config_get('CONDUCTOR_PASS');
     $givenUser = $_SERVER['PHP_AUTH_USER'] ?? '';
     $givenPass = $_SERVER['PHP_AUTH_PW'] ?? '';
     $ok = $user !== '' && $pass !== ''
         && hash_equals($user, $givenUser)
         && hash_equals($pass, $givenPass);
     if (!$ok) {
-        header('WWW-Authenticate: Basic realm="HDS Router"');
+        header('WWW-Authenticate: Basic realm="Conductor"');
         http_response_code(401);
         echo "Auth required.";
         exit;
@@ -212,7 +212,7 @@ function find_pending_prompts(array $registry, array $running): array {
 function render_header(string $title): void {
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        . '<title>' . h($title) . ' - HDS Router</title><style>'
+        . '<title>' . h($title) . ' - Conductor</title><style>'
         . 'body{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;padding:16px;background:#111;color:#eee}'
         . 'a{color:#7ab8ff}'
         . 'h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:1.5em}'
@@ -259,7 +259,7 @@ function build_settings_json(string $agentDirAbs): string {
     $data = [
         'permissions' => [
             'allow' => [
-                'Read(' . router_read_scope() . ')',
+                'Read(' . conductor_read_scope() . ')',
                 'Write(' . $agentDirAbs . '/**)',
                 'Bash(git *)',
                 'Bash(find *)',
