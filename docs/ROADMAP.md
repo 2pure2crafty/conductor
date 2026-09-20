@@ -10,7 +10,8 @@ wrap-down (`/wrap-up` then kill), self-introducing spin-up.
 
 The four highest-value additions are, in order: push notifications (#1),
 SESSION.md preview (#2), auto-wrap-down on idle (#3), and live status
-badges (#4).
+badges (#4). Token tracking (#9) is a strong candidate too, since the same
+transcript data it reads also drives the auto-wrap-down refinement.
 
 ---
 
@@ -108,37 +109,82 @@ Net: you trade a large cold cache-write later for a small SESSION.md write now
 plus a small cold start next time. For intermittent phone-driven use, that is
 the cheaper path, and it is the behavior Conductor was built around.
 
+### The size gate: wrap-down is a safety valve, not a routine timer
+
+Idle time alone is the wrong trigger. Wrapping down is not free: it spends a
+summary turn (reads the whole context once, at ~0.1x while the cache is still
+warm, plus a few hundred output tokens to write SESSION.md), and the next
+spin-up pays a small fresh read of the handoff. The savings from avoiding a
+future cold resume scale with context size, roughly **1.15x times the context**
+(the 1.25x cold write you'd have paid, minus the 0.1x warm read the wrap-up
+turn costs).
+
+So the size of the context decides whether it is worth it:
+
+- **Small context** (spun up, did two or three small things, on the order of
+  10-20k tokens): the absolute saving is tiny, and you have paid a lossy summary
+  turn and thrown away the live conversation for almost nothing. Better to leave
+  it: let the cache lapse and eat a cheap small cold resume if Patch returns, or
+  just let the session sit. Continuity preserved, near-zero cost either way.
+- **Large / unwieldy context** (a long working session, hundreds of k of
+  tokens): a cold resume is genuinely expensive, so snapshotting to a compact
+  SESSION.md and resetting is a real win.
+
+**Therefore auto-wrap-down gates on BOTH idle time AND context size.** It fires
+only when the agent has been idle past the timeout AND its context has grown past
+a threshold. It is a safety stop for when the context becomes unwieldy, not a
+punishment for pausing four minutes on a small session.
+
+Measuring live context size is exact, not estimated: Claude Code logs every turn
+to `~/.claude/projects/<encoded-cwd>/*.jsonl`, and the latest assistant turn's
+`input_tokens + cache_read_input_tokens + cache_creation_input_tokens` is the
+current context size. The watcher reads the transcript tail to get it. (This is
+the same transcript data feature #9 uses for token totals, so build them
+together.)
+
 ### What
 
-A per-agent idle timeout (default 240s, config key `CONDUCTOR_IDLE_TIMEOUT`,
-`0` = disabled). When an agent has been idle (status "for agents", see #4) with
-no pending prompt for longer than the timeout, run the existing wrap-down:
-`/wrap-up`, wait for SESSION.md, kill the session.
+Auto-wrap-down fires when **both** conditions hold, per agent:
+- idle past `CONDUCTOR_IDLE_TIMEOUT` (default 240s, `0` = disabled), AND
+- current context size past `CONDUCTOR_WRAPDOWN_MIN_CONTEXT` (default ~100k
+  tokens, `0` = no size gate).
+
+Then run the existing wrap-down: `/wrap-up`, wait for SESSION.md, kill. Below the
+size threshold, an idle agent is left alone (optionally just killed without a
+wrap-up if Patch prefers, but the safe default is leave-running).
+
+The 100k default is a starting point to tune: at Sonnet input pricing a cold
+resume of 100k costs on the order of a few tens of cents, which is roughly where
+"snapshot and reset" starts clearly beating "resume." Lower it if you want to
+reclaim sooner, raise it if you value continuity more.
 
 ### How
 
-Fold this into the same poller as #1 (one watcher process, two jobs). Track
-per-agent "idle since" timestamps in the state file. Each cycle:
+Fold this into the same poller as #1 (one watcher process). Track per-agent
+"idle since" timestamps in the state file. Each cycle:
 - if an agent is working or has a pending prompt, clear its idle timer;
-- if idle, and `now - idle_since >= CONDUCTOR_IDLE_TIMEOUT`, trigger wrap-down
-  (reuse the exact logic in `wrapdown.php`, factored into a `lib.php` helper so
-  both the web handler and the watcher call the same code).
+- if idle past `CONDUCTOR_IDLE_TIMEOUT`, read its context size from the
+  transcript tail (see #9); if it also exceeds `CONDUCTOR_WRAPDOWN_MIN_CONTEXT`,
+  trigger wrap-down (reuse the exact logic in `wrapdown.php`, factored into a
+  `lib.php` helper so both the web handler and the watcher call the same code).
 
 Guardrails:
 - **Never auto-kill an agent with a pending permission prompt.** That would
   destroy the in-progress write. Only wrap down clean-idle agents.
-- Detecting "idle" must not itself count as activity; capture-pane is read-only,
-  so it is safe.
+- **Respect the size gate.** Do not wrap down a small-context agent on idle
+  alone; the token math does not justify it (see the size-gate section above).
+- Detecting "idle" must not itself count as activity; capture-pane and reading
+  the transcript are both read-only, so they are safe.
 - Make it opt-in per agent (a registry flag, e.g. `"auto_wrapdown": true`), so a
   long-running job Patch wants left alone can set it false.
 - Log every auto-wrap-down (see #7 audit log) and optionally push a note (#1).
 
-**Effort.** Medium. Mostly refactoring `wrapdown.php` into a shared helper and
-adding the timer bookkeeping to the watcher. ~half a day, most of it testing the
-"don't kill a busy/prompting agent" edge cases.
+**Effort.** Medium. Refactor `wrapdown.php` into a shared helper, add the timer
+bookkeeping and the transcript-size read to the watcher. ~half a day, most of it
+testing the "don't kill a busy/prompting/small-context agent" edge cases.
 
-**Dependencies.** The watcher process (#1) and the idle detection (#4). Build
-#1/#4 first; this rides on them.
+**Dependencies.** The watcher (#1), idle detection (#4), and the transcript
+reader (#9). Build those first; this rides on them.
 
 ---
 
@@ -254,17 +300,70 @@ spin-ups / wrap-downs / auto-kills with timestamps.
 
 ---
 
+## 9. Token tracking (per agent / per project)
+
+**Problem.** During a live prompt you see a token readout, but there is no way to
+go back and see tokens spent per project over time, or to see a running total at
+the project level.
+
+**What.** Both a historical read and a live-ish readout:
+- **Historical:** total tokens (and an estimated cost) per agent and per project,
+  across all past sessions. Shown on the project page and summed on the
+  dashboard.
+- **Live:** the current session's running total and current context size, shown
+  on the agent page while it is up.
+
+**This is confirmed feasible, not hypothetical.** Claude Code logs every turn to
+`~/.claude/projects/<encoded-cwd>/*.jsonl`, where `<encoded-cwd>` is the agent's
+working directory with `/` replaced by `-` (e.g. `/var/www/my-cards` ->
+`-var-www-my-cards`). Each assistant record carries a `usage` object with
+`input_tokens`, `output_tokens`, `cache_read_input_tokens`,
+`cache_creation_input_tokens`, and the `model`. Verified present on this server.
+
+**How.**
+- Add `agent_token_usage(project, agent)` to `lib.php`: resolve the agent's cwd,
+  map it to the encoded transcript dir under a configurable transcripts root
+  (`CONDUCTOR_TRANSCRIPTS_DIR`, default `/home/patch/.claude/projects`), read
+  every `*.jsonl`, and sum the four usage fields (grouped by model, since
+  pricing differs).
+- `project_token_usage(project)` sums across the project's agents.
+- Cost estimate: multiply by per-model input/output rates from a small config
+  map (cache-read billed ~0.1x input, cache-write ~1.25x input). Keep the rate
+  table in one place so it is easy to update; label the figure "estimated."
+- **Current context size** for the live/auto-wrap-down use: the last assistant
+  record's `input + cache_read + cache_creation`. Expose as
+  `agent_context_size(project, agent)`; the watcher (#3) reuses it.
+- Rendering: a compact "tokens: X in / Y out (~$Z)" line per agent on the
+  project page, a project total on the dashboard, and current context size on
+  the agent page.
+
+Caveats to note in the UI: totals cover only transcripts still on disk (Claude
+Code retention), and cost is an estimate from a local rate table, not billing
+truth. Reading transcripts is read-only and safe.
+
+**Effort.** Medium. The parse-and-sum is straightforward; the fiddly parts are
+the cwd->encoded-dir mapping (handle agents whose `path` is `.` vs a subdir) and
+keeping the pricing table current. ~half a day.
+
+**Dependencies.** None to read; shares the transcript-parsing code with #3's
+context-size gate, so build the transcript reader once and use it for both.
+
+---
+
 ## Build-order suggestion
 
-1. **Watcher process** (shared infra for #1 and #3) + **status detection** (#4).
+1. **Transcript reader** (#9 core): parse `~/.claude/projects/*/*.jsonl` for
+   usage totals and current context size. Shared by #9 and #3.
+2. **Watcher process** (shared infra for #1 and #3) + **status detection** (#4).
    One `conductor-watch` service that classifies every live agent each cycle.
-2. **Push on needs-attention** (#1) on top of the watcher.
-3. **SESSION.md preview** (#2) and **status badges** (#4 render) in the pages.
-4. **Auto-wrap-down** (#3): refactor `wrapdown.php` into a shared helper, add
-   the idle timer to the watcher, with the "never kill a prompting/working
-   agent" guardrails and per-agent opt-in.
-5. The smaller UI wins (#5 peek, #6 nudge, #8 links + PWA) as time allows.
-6. **Registry management + audit log** (#7) last; most surface area.
+3. **Push on needs-attention** (#1) on top of the watcher.
+4. **Token tracking UI** (#9) + **SESSION.md preview** (#2) + **status badges**
+   (#4 render) in the pages.
+5. **Auto-wrap-down** (#3): refactor `wrapdown.php` into a shared helper; gate on
+   idle time AND context size (from the #9 reader); "never kill a
+   prompting/working/small-context agent" guardrails; per-agent opt-in.
+6. The smaller UI wins (#5 peek, #6 nudge, #8 links + PWA) as time allows.
+7. **Registry management + audit log** (#7) last; most surface area.
 
 ## Repo discipline (keep the pushed code generic)
 
