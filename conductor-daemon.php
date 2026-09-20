@@ -61,6 +61,30 @@ function run_cycle(array &$state): void {
     $now         = time();
     $seen        = [];
 
+    // Push notifications: rising-edge alert when a live agent starts waiting on
+    // a permission prompt. Non-destructive and observability-only, so it runs
+    // regardless of dry-run (it's exactly what you want to see while observing).
+    if (conductor_push_url() !== '') {
+        $running = tmux_running_sessions();
+        $pending = find_pending_prompts($registry, $running);
+        $notified = $state['_notified'] ?? [];
+        $current = [];
+        foreach ($pending as $p) {
+            $nkey = $p['project'] . '/' . $p['agent'];
+            $current[$nkey] = true;
+            if (empty($notified[$nkey])) {
+                $click = conductor_dashboard_url();
+                $ok = push_notify(
+                    $p['projectLabel'] . ' - ' . $p['agentLabel'] . ' needs attention',
+                    $p['prompt']['question'] . "\n(" . implode(' / ', $p['prompt']['options']) . ')',
+                    ['tags' => 'warning', 'priority' => '4'] + ($click ? ['click' => $click] : [])
+                );
+                daemon_log("NOTIFY $nkey pending prompt; push " . ($ok ? 'sent' : 'failed'));
+            }
+        }
+        $state['_notified'] = $current; // drop cleared ones so they re-arm
+    }
+
     foreach ($registry['projects'] as $pSlug => $project) {
         foreach ($project['agents'] as $aSlug => $agent) {
             if (empty($agent['auto_wrapdown'])) continue; // opt-in only
@@ -135,8 +159,10 @@ function run_cycle(array &$state): void {
         }
     }
 
-    // Drop state for agents no longer present / relevant.
+    // Drop state for agents no longer present / relevant. Underscore-prefixed
+    // keys (e.g. _notified) are daemon-internal and exempt.
     foreach (array_keys($state) as $key) {
+        if ($key[0] === '_') continue;
         if (empty($seen[$key])) unset($state[$key]);
     }
 }

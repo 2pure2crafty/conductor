@@ -102,6 +102,21 @@ function conductor_digest_regen_delta(): int {
     return (int) conductor_config_get('CONDUCTOR_DIGEST_REGEN_DELTA', '5000');
 }
 
+/** ntfy-style push endpoint (e.g. https://ntfy.sh/<topic>). Empty = notifications off. */
+function conductor_push_url(): string {
+    return conductor_config_get('CONDUCTOR_PUSH_URL', '');
+}
+
+/** Optional bearer token for the push endpoint. */
+function conductor_push_token(): string {
+    return conductor_config_get('CONDUCTOR_PUSH_TOKEN', '');
+}
+
+/** Public dashboard URL, used as the tap-through target on notifications. */
+function conductor_dashboard_url(): string {
+    return conductor_config_get('CONDUCTOR_DASHBOARD_URL', '');
+}
+
 /**
  * URL path the app is mounted under, e.g. "/conductor/" when reverse-proxied at
  * a sub-path (Tailscale serve --set-path). Emitted as a <base> tag so the app's
@@ -391,6 +406,27 @@ function agent_token_usage(array $project, array $agent): array {
         }
     }
     return $totals;
+}
+
+/**
+ * Send a push notification via an ntfy-compatible endpoint (ntfy.sh or a
+ * self-hosted ntfy). No-op (returns false) if CONDUCTOR_PUSH_URL is unset.
+ * $opts: tags (comma string), priority (1-5), click (URL).
+ */
+function push_notify(string $title, string $message, array $opts = []): bool {
+    $url = conductor_push_url();
+    if ($url === '') return false;
+    $argv = ['curl', '-s', '-m', '10', '-X', 'POST'];
+    $argv[] = '-H'; $argv[] = 'Title: ' . str_replace(["\r", "\n"], ' ', $title);
+    if (!empty($opts['tags']))     { $argv[] = '-H'; $argv[] = 'Tags: ' . $opts['tags']; }
+    if (!empty($opts['priority'])) { $argv[] = '-H'; $argv[] = 'Priority: ' . $opts['priority']; }
+    if (!empty($opts['click']))    { $argv[] = '-H'; $argv[] = 'Click: ' . $opts['click']; }
+    $token = conductor_push_token();
+    if ($token !== '')             { $argv[] = '-H'; $argv[] = 'Authorization: Bearer ' . $token; }
+    $argv[] = '--data-binary'; $argv[] = $message;
+    $argv[] = $url;
+    [$exit] = run_cmd($argv, null, '', 12);
+    return $exit === 0;
 }
 
 /* --- tiered memory: digest roll-up ---------------------------------------- */
