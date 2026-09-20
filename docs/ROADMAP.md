@@ -358,20 +358,161 @@ context-size gate, so build the transcript reader once and use it for both.
 
 ---
 
+## 10. The daemon as a job runner (mechanical work + one-shot Haiku)
+
+The daemon (shipped for #3) should own as many background jobs as possible, not
+just auto-wrap-down. Split every job into a mechanical part it does itself and a
+reasoning part it delegates.
+
+**Mechanical (the daemon does directly, no model):** status classification, idle
+timers, the auto-wrap-down trigger, token bookkeeping (#9), detecting when a
+digest is stale (a size check), and archive rotation (moving delimited old
+entries between files). All cheap, deterministic, no tokens.
+
+**Reasoning (delegate to a one-shot Haiku):** anything that needs judgment, e.g.
+condensing HISTORY.md into DIGEST.md (#11). The daemon shells out a headless,
+single-turn Haiku and does the file I/O itself:
+
+```
+cat memory/HISTORY.md | claude --model haiku -p "<condense instructions>"  > /tmp/digest
+# daemon then writes the returned text to memory/DIGEST.md
+```
+
+Verified working on this server: `claude --model haiku -p` runs non-interactive,
+reads stdin, prints the answer, and exits, reusing the box's existing Claude Code
+auth (no separate API key, counts against the same plan). Because the daemon
+pipes content in and writes the output file itself, Haiku only reasons; it never
+touches the filesystem, so there is no permission prompt and no tmux/session
+lifecycle. Bound each call with a timeout.
+
+Why Haiku: these are summarization/extraction jobs, the cheapest model is the
+right tool, and they run rarely (amortized, see #11). This pattern generalizes:
+any future daemon job that needs a little reasoning uses the same
+`daemon_reason($prompt, $stdin)` helper (one place to wrap the `claude -p` call,
+model, timeout, and error handling).
+
+**Effort.** Low for the helper itself (~1-2 hours: wrap `claude -p` via
+`proc_open`, with a timeout and a captured-stdout return). The value is that it
+unlocks #11 and any later reasoning jobs.
+
+**Dependencies.** The daemon (#3, shipped). `claude` CLI on the host (already a
+requirement).
+
+---
+
+## 11. Tiered agent memory (stop fidelity loss over time)
+
+**Problem.** `/wrap-up` overwrites SESSION.md each time, so each handoff is a
+summary written from the previous summary: lossy recompression stacked on lossy
+recompression. Detail from early sessions is not archived, it is gone. We want
+information that is persistent, cheap to read, and does not lose fidelity as it
+ages.
+
+**The one principle everything follows from:** keep an append-only, lossless log,
+and derive every summary from that log, never from a previous summary. Compress
+from source, not from the last compression. That is what stops the compounding.
+
+### The tiers
+
+```
+project/
+  SESSION.md                 # Tier 1: latest handoff only. Overwritten. ~1k tokens.
+  memory/
+    HISTORY.md               # Tier 3: append-only, every handoff, dated, newest on top.
+    DIGEST.md                # Tier 2: rolling condensed summary of the older history.
+    archive/
+      HISTORY-<period>.md    #   rotated old chunks of the full log
+      v<N>-summary.md        #   a summary written when a version is locked in
+```
+
+- **Tier 1, SESSION.md**: "pick up exactly where you left off." Latest state and
+  next step only. Already shipped.
+- **Tier 3, HISTORY.md**: the comprehensive record. Every wrap-up appends its
+  dated handoff. Nothing here is ever recompressed, so it is lossless: high
+  fidelity, higher read cost.
+- **Tier 2, DIGEST.md**: the "a bit more context" middle layer, a condensed
+  summary of everything older than the most recent few entries, regenerated from
+  HISTORY.md.
+- **Archive**: dead weight, rotated-out log chunks and superseded versions. Never
+  in the hot path.
+- **Version summaries**: when a version is locked in, write
+  `archive/v<N>-summary.md`, a deliberate milestone checkpoint (semantic memory),
+  distinct from the running session log (episodic memory). Low frequency.
+
+### The reading ladder (progressive disclosure)
+
+Documented in the scaffolded CLAUDE.md so the agent does it on spin-up:
+1. Always read **SESSION.md**. Usually enough.
+2. Need more background? Read **DIGEST.md**.
+3. Need a specific detail the digest dropped? grep / read **HISTORY.md**.
+4. **archive/** only on explicit need.
+
+You almost always pay only step 1; the rest is on demand.
+
+### Who writes what, and the cost
+
+- **Per wrap-up (every session), agent-side, nearly free:** overwrite SESSION.md
+  and *append* one dated entry to HISTORY.md. The agent already has the session in
+  context; appending the handoff it is already writing costs output tokens only,
+  no extra read. This single change converts the lossy overwrite into a lossless
+  log and stops the fidelity bleed. **This is the cheap, high-value first step.**
+- **Digest roll-up (amortized, daemon + one-shot Haiku, see #10):** only when
+  HISTORY.md grows past a threshold (`CONDUCTOR_DIGEST_THRESHOLD`, e.g. ~15-20k
+  tokens) does the daemon regenerate DIGEST.md from HISTORY.md and rotate the
+  summarized-out portion into archive/. You pay one full-history read per
+  threshold crossing, not per session.
+- **Version summary (rare):** written at a release checkpoint.
+
+**The critical rule, again:** the roll-up regenerates DIGEST *from HISTORY*, not
+by summarizing "old DIGEST + new entries." Digest-of-digest would reintroduce the
+compounding loss. Regenerating from the lossless log keeps DIGEST exactly one
+lossy step from source, forever.
+
+### Net token profile
+
+- Typical spin-up: ~1k (SESSION.md), same as today.
+- Occasional deeper context: +3-5k (DIGEST) only when needed.
+- The lossless record exists but is rarely read whole; you grep it.
+- Compression cost is amortized across many sessions and never compounds.
+
+### Build order for this feature
+
+1. **Append-only HISTORY.md** in the wrap-up skill + the reading ladder in the
+   CLAUDE.md scaffold. Small, agent-side, immediately stops fidelity loss. Do
+   first.
+2. **Digest roll-up** as a daemon job (#10): size-threshold trigger (mechanical)
+   + one-shot Haiku (reasoning) + archive rotation (mechanical).
+3. **Version summaries** and archive conventions.
+
+File names and thresholds are config keys so they are easy to tune. Everything is
+plain files in the agent dir: greppable, git-trackable, and portable.
+
+**Effort.** Step 1 is ~1-2 hours (edit `WRAPUP_SKILL_SRC` and `build_claude_md`).
+Steps 2-3 are ~half a day on top of the daemon and the #10 helper.
+
+**Dependencies.** Step 1: none. Steps 2-3: the daemon (#3) and the one-shot Haiku
+helper (#10).
+
+---
+
 ## Build-order suggestion
 
-1. **Transcript reader** (#9 core): parse `~/.claude/projects/*/*.jsonl` for
-   usage totals and current context size. Shared by #9 and #3.
-2. **Watcher process** (shared infra for #1 and #3) + **status detection** (#4).
-   One `conductor-watch` service that classifies every live agent each cycle.
-3. **Push on needs-attention** (#1) on top of the watcher.
-4. **Token tracking UI** (#9) + **SESSION.md preview** (#2) + **status badges**
-   (#4 render) in the pages.
-5. **Auto-wrap-down** (#3): refactor `wrapdown.php` into a shared helper; gate on
-   idle time AND context size (from the #9 reader); "never kill a
-   prompting/working/small-context agent" guardrails; per-agent opt-in.
+Done: the transcript reader (#9 core), status detection (#4 core), and the
+daemon with size-gated auto-wrap-down (#3). What's left, in order:
+
+1. **Append-only HISTORY.md + reading ladder** (#11 step 1): the cheap,
+   high-value fidelity fix. Edit the wrap-up skill and the CLAUDE.md scaffold.
+   Agent-side, no new infra. Do this first.
+2. **One-shot Haiku helper** (#10): a `daemon_reason()` wrapper around
+   `claude --model haiku -p`, so the daemon can do reasoning jobs.
+3. **Digest roll-up** (#11 step 2): threshold trigger + Haiku condense + archive
+   rotation, run by the daemon.
+4. **Push on needs-attention** (#1) on top of the daemon.
+5. **Token tracking UI** (#9) + **SESSION.md / DIGEST preview** (#2) + **status
+   badges** (#4 render) in the pages.
 6. The smaller UI wins (#5 peek, #6 nudge, #8 links + PWA) as time allows.
-7. **Registry management + audit log** (#7) last; most surface area.
+7. **Version summaries** (#11 step 3) + **registry management + audit log** (#7)
+   last; most surface area.
 
 ## Repo discipline (keep the pushed code generic)
 
