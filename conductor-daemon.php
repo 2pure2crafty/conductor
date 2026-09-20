@@ -104,7 +104,38 @@ function run_cycle(array &$state): void {
         }
     }
 
-    // Drop state for agents no longer opted-in / present.
+    // Digest roll-up: non-destructive, runs for every agent (not just opted-in),
+    // regenerating memory/DIGEST.md from memory/HISTORY.md once it has grown
+    // enough. Amortized via a size delta since the last digest.
+    $threshold = conductor_digest_threshold();
+    $regenDelta = conductor_digest_regen_delta();
+    foreach ($registry['projects'] as $pSlug => $project) {
+        foreach ($project['agents'] as $aSlug => $agent) {
+            $dkey = 'digest:' . $pSlug . '/' . $aSlug;
+            $seen[$dkey] = true;
+            $historyPath = agent_memory_dir($project, $agent) . '/HISTORY.md';
+            if (!is_file($historyPath)) { unset($state[$dkey]); continue; }
+
+            clearstatcache(true, $historyPath);
+            $srcTokens = est_tokens((string) @file_get_contents($historyPath));
+            if ($srcTokens < $threshold) continue; // not big enough to bother
+
+            $lastDigested = (int) ($state[$dkey]['src_tokens'] ?? 0);
+            if ($lastDigested > 0 && ($srcTokens - $lastDigested) < $regenDelta) continue; // grew too little since last
+
+            $label = $pSlug . '/' . $aSlug;
+            if ($dryrun) {
+                daemon_log("DRYRUN would regenerate DIGEST for $label (history ~{$srcTokens} tok)");
+                continue;
+            }
+            daemon_log("DIGEST regenerating for $label (history ~{$srcTokens} tok, last ~{$lastDigested})");
+            $res = regenerate_digest($project, $agent);
+            daemon_log("  result: " . json_encode($res));
+            if ($res['ok']) $state[$dkey] = ['src_tokens' => $res['src_tokens'], 'at' => $now];
+        }
+    }
+
+    // Drop state for agents no longer present / relevant.
     foreach (array_keys($state) as $key) {
         if (empty($seen[$key])) unset($state[$key]);
     }
