@@ -523,7 +523,14 @@ function render_header(string $title): void {
         . '.btn.stop{background:#b91c1c}'
         . '.status{display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.8rem;margin-left:6px}'
         . '.status.live{background:#14532d;color:#bbf7d0}'
+        . '.status.idle{background:#14532d;color:#bbf7d0}'
+        . '.status.working{background:#1e3a8a;color:#bfdbfe}'
+        . '.status.attention{background:#78350f;color:#fed7aa}'
         . '.status.stopped{background:#3f3f46;color:#d4d4d8}'
+        . 'details{margin-top:8px}details summary{cursor:pointer;color:#7ab8ff;font-size:0.9rem}'
+        . 'details pre{white-space:pre-wrap;word-wrap:break-word;background:#141414;border:1px solid #333;'
+        . 'border-radius:6px;padding:10px;font-size:0.82rem;color:#cfcfcf;max-height:340px;overflow:auto}'
+        . '.meta{color:#888;font-size:0.8rem;margin-top:4px}'
         . 'label{display:block;margin-top:14px;font-size:0.9rem;color:#ccc}'
         . 'input[type=text],select,textarea{width:100%;padding:10px;margin-top:4px;border-radius:6px;'
         . 'border:1px solid #444;background:#1c1c1c;color:#eee;font-size:1rem;box-sizing:border-box}'
@@ -534,6 +541,37 @@ function render_header(string $title): void {
 
 function render_footer(): void {
     echo '</body></html>';
+}
+
+/** Compact token count: 1234 -> "1.2k", 1500000 -> "1.5M". */
+function fmt_tokens(int $n): string {
+    if ($n >= 1000000) return round($n / 1000000, 1) . 'M';
+    if ($n >= 1000)    return round($n / 1000, 1) . 'k';
+    return (string) $n;
+}
+
+/** Per-1M-token [input, output] USD rates by model alias. Cache read ~0.1x in, write ~1.25x in. */
+function model_rates(string $model): array {
+    $t = [
+        'opus'   => [5.0, 25.0], 'fable' => [10.0, 50.0],
+        'sonnet' => [3.0, 15.0], 'haiku' => [1.0, 5.0],
+    ];
+    foreach ($t as $k => $r) if (str_contains($model, $k)) return $r;
+    return $t['sonnet'];
+}
+
+/** Rough USD cost estimate from aggregated usage and the agent's model. */
+function estimate_cost(array $usage, string $model): float {
+    [$in, $out] = model_rates($model);
+    $inTokens = ($usage['input'] ?? 0)
+              + ($usage['cache_write'] ?? 0) * 1.25
+              + ($usage['cache_read'] ?? 0) * 0.1;
+    return $inTokens / 1e6 * $in + ($usage['output'] ?? 0) / 1e6 * $out;
+}
+
+/** HTML status badge span for one of working/idle/attention/stopped. */
+function status_badge(string $status): string {
+    return '<span class="status ' . h($status) . '">' . h($status) . '</span>';
 }
 
 function build_claude_md(string $agentLabel, string $projectDescription, string $instructions): string {

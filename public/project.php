@@ -25,12 +25,47 @@ if (!empty($project['repo'])) {
     echo '<p><a href="' . h($project['repo']) . '">' . h($project['repo']) . '</a></p>';
 }
 
+$projTotals = ['input' => 0, 'output' => 0, 'cache_read' => 0, 'cache_write' => 0, 'sessions' => 0];
+$projCost = 0.0;
+
 echo '<h2>Agents</h2>';
 foreach ($project['agents'] as $agentSlug => $agent) {
     $isLive = in_array($agent['tmux'], $running, true);
-    echo '<div class="card"><strong>' . h($agent['label']) . '</strong>'
-        . '<span class="status ' . ($isLive ? 'live' : 'stopped') . '">' . ($isLive ? 'live' : 'stopped') . '</span>';
+    $status = $isLive ? agent_status($agent['tmux']) : 'stopped';
+
+    echo '<div class="card"><strong>' . h($agent['label']) . '</strong>' . status_badge($status);
     echo '<div class="desc">tmux: ' . h($agent['tmux']) . ' &middot; model: ' . h($agent['model']) . '</div>';
+
+    // Live context size
+    if ($isLive) {
+        $ctx = agent_context_size($project, $agent);
+        if ($ctx > 0) echo '<div class="meta">context now: ' . fmt_tokens($ctx) . ' tokens</div>';
+    }
+
+    // Lifetime token totals + estimated cost
+    $usage = agent_token_usage($project, $agent);
+    foreach ($projTotals as $k => $_) $projTotals[$k] += $usage[$k];
+    $cost = estimate_cost($usage, $agent['model']);
+    $projCost += $cost;
+    if ($usage['sessions'] > 0) {
+        echo '<div class="meta">tokens: ' . fmt_tokens($usage['input'] + $usage['cache_read'] + $usage['cache_write'])
+            . ' in / ' . fmt_tokens($usage['output']) . ' out'
+            . ' &middot; ~$' . number_format($cost, 2)
+            . ' &middot; ' . $usage['sessions'] . ' session' . ($usage['sessions'] === 1 ? '' : 's') . '</div>';
+    }
+
+    // SESSION.md + DIGEST previews (read-only)
+    $sessionPath = agent_dir($project, $agent) . '/SESSION.md';
+    if (is_file($sessionPath)) {
+        echo '<details><summary>SESSION.md &middot; last active ' . h(date('Y-m-d H:i', filemtime($sessionPath))) . '</summary>'
+            . '<pre>' . h((string) file_get_contents($sessionPath)) . '</pre></details>';
+    }
+    $digestPath = agent_memory_dir($project, $agent) . '/DIGEST.md';
+    if (is_file($digestPath)) {
+        echo '<details><summary>memory/DIGEST.md (condensed history)</summary>'
+            . '<pre>' . h((string) file_get_contents($digestPath)) . '</pre></details>';
+    }
+
     if ($isLive) {
         echo '<form method="post" action="wrapdown.php" onsubmit="return confirm(\'Send /wrap-up and stop this session?\');">'
             . '<input type="hidden" name="project" value="' . h($slug) . '">'
@@ -38,6 +73,13 @@ foreach ($project['agents'] as $agentSlug => $agent) {
             . '<button class="btn stop" type="submit">Wrap up &amp; stop</button></form>';
     }
     echo '</div>';
+}
+
+if ($projTotals['sessions'] > 0) {
+    echo '<div class="meta">Project total: '
+        . fmt_tokens($projTotals['input'] + $projTotals['cache_read'] + $projTotals['cache_write'])
+        . ' in / ' . fmt_tokens($projTotals['output']) . ' out &middot; ~$' . number_format($projCost, 2)
+        . ' (estimated, from transcripts on disk)</div>';
 }
 
 echo '<a class="btn" href="spawn-form.php?project=' . h($slug) . '">Spin up agent</a>';
