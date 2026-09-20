@@ -11,7 +11,8 @@
                     "path": "main",
                     "tmux": "HDS-example-project-main",
                     "model": "sonnet",
-                    "permission_mode": "acceptEdits"
+                    "permission_mode": "acceptEdits",
+                    "auto_wrapdown": false
                 }
             }
         }

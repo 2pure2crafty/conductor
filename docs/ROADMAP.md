@@ -8,6 +8,14 @@ Current state (shipped): dashboard, project profile pages, spin up
 "Needs attention" permission-prompt handling (approve / deny / open-terminal),
 wrap-down (`/wrap-up` then kill), self-introducing spin-up.
 
+**Also now shipped:** the transcript reader (#9 core: token totals + live context
+size from `~/.claude/projects`), the `agent_status()` classifier (#4 core), and
+the **conductor daemon** (#3): an always-on `conductor-daemon.service` that
+auto-wraps-down opted-in agents once context crosses the size gate and then goes
+idle. Runs dry-run-by-default and per-agent opt-in. Still to build on top:
+push notifications (#1), the token/status/preview UI rendering (#2, #4, #9 UI),
+and the smaller wins (#5-#8).
+
 The four highest-value additions are, in order: push notifications (#1),
 SESSION.md preview (#2), auto-wrap-down on idle (#3), and live status
 badges (#4). Token tracking (#9) is a strong candidate too, since the same

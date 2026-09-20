@@ -1,0 +1,33 @@
+# Conductor daemon systemd unit template.
+#
+#   sudo cp conductor-daemon.service.example /etc/systemd/system/conductor-daemon.service
+#   # edit User/Group/path below to match this server, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now conductor-daemon.service
+#
+# The daemon watches opted-in agents and auto-wraps-down ones whose context has
+# grown past CONDUCTOR_WRAPDOWN_MIN_CONTEXT and then sat idle past
+# CONDUCTOR_IDLE_TIMEOUT. It ships SAFE: dry-run is on by default (logs, never
+# kills) and it only touches agents with "auto_wrapdown": true in registry.json.
+# Config is read from /etc/default/conductor (see conductor.env.example).
+
+[Unit]
+Description=Conductor daemon (agent watcher / auto-wrap-down)
+After=network.target
+
+[Service]
+Type=simple
+# Same unprivileged user that owns the agent dirs and can drive tmux + claude.
+User=change-me
+Group=change-me
+ExecStart=/usr/bin/php /opt/conductor/conductor-daemon.php
+Restart=always
+RestartSec=5
+# systemd creates and owns these for the service user:
+RuntimeDirectory=conductor    # -> /run/conductor   (transient timer state)
+LogsDirectory=conductor       # -> /var/log/conductor (daemon.log)
+# Optional: relocate the config file.
+#Environment=CONDUCTOR_CONFIG=/etc/default/conductor
+
+[Install]
+WantedBy=multi-user.target

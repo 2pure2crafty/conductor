@@ -65,6 +65,33 @@ function conductor_tmux_prefix(): string {
     return conductor_config_get('CONDUCTOR_TMUX_PREFIX', 'HDS');
 }
 
+/* --- daemon / token-tracking config --------------------------------------- */
+
+/** Root dir Claude Code writes per-project transcripts to. */
+function conductor_transcripts_dir(): string {
+    return rtrim(conductor_config_get('CONDUCTOR_TRANSCRIPTS_DIR', '/home/patch/.claude/projects'), '/');
+}
+
+/** Seconds an agent must sit idle (while over the size gate) before auto-wrap-down. */
+function conductor_idle_timeout(): int {
+    return (int) conductor_config_get('CONDUCTOR_IDLE_TIMEOUT', '240');
+}
+
+/** Context-size gate: auto-wrap-down only arms once context exceeds this many tokens. 0 = no gate. */
+function conductor_wrapdown_min_context(): int {
+    return (int) conductor_config_get('CONDUCTOR_WRAPDOWN_MIN_CONTEXT', '100000');
+}
+
+/** Seconds between daemon poll cycles. */
+function conductor_daemon_interval(): int {
+    return max(5, (int) conductor_config_get('CONDUCTOR_DAEMON_INTERVAL', '30'));
+}
+
+/** When true (default), the daemon logs decisions but never kills anything. */
+function conductor_daemon_dryrun(): bool {
+    return conductor_config_get('CONDUCTOR_DAEMON_DRYRUN', '1') !== '0';
+}
+
 /**
  * URL path the app is mounted under, e.g. "/conductor/" when reverse-proxied at
  * a sub-path (Tailscale serve --set-path). Emitted as a <base> tag so the app's
@@ -222,6 +249,120 @@ function find_pending_prompts(array $registry, array $running): array {
         }
     }
     return $found;
+}
+
+/**
+ * Classify a live agent's pane: 'attention' (pending permission prompt),
+ * 'working' (mid-response), 'idle' (ready for input), or 'stopped' (no session).
+ * All read-only.
+ */
+function agent_status(string $tmux): string {
+    if (!tmux_session_exists($tmux)) return 'stopped';
+    [$exit, $out] = run_cmd(['tmux', 'capture-pane', '-t', $tmux, '-p', '-S', '-40']);
+    if ($exit !== 0) return 'stopped';
+    if (str_contains($out, 'Esc to cancel')) return 'attention';
+    if (str_contains($out, 'esc to interrupt')) return 'working';
+    if (str_contains($out, 'for agents')) return 'idle';
+    return 'working'; // starting up or an unrecognized transient state; not idle
+}
+
+/* --- transcript reading (token totals + live context size) ---------------- */
+
+/** Map an absolute working directory to its Claude Code transcript dir name (/ -> -). */
+function encode_cwd(string $absPath): string {
+    return str_replace('/', '-', $absPath);
+}
+
+/** Absolute transcript dir for an agent, or null if it doesn't exist. */
+function agent_transcript_dir(array $project, array $agent): ?string {
+    $cwd = agent_dir($project, $agent);
+    $dir = conductor_transcripts_dir() . '/' . encode_cwd($cwd);
+    return is_dir($dir) ? $dir : null;
+}
+
+/** Pull the usage object out of one transcript JSONL line, or null. */
+function _usage_from_line(string $line): ?array {
+    $rec = json_decode($line, true);
+    if (!is_array($rec)) return null;
+    $msg = $rec['message'] ?? [];
+    $u = (is_array($msg) ? ($msg['usage'] ?? null) : null) ?? ($rec['usage'] ?? null);
+    return is_array($u) ? $u : null;
+}
+
+/**
+ * Current context size (tokens) for an agent: the most recent transcript turn's
+ * input + cache_read + cache_creation. 0 if no transcript. Reads only the newest
+ * transcript file, tail-first, so it's cheap.
+ */
+function agent_context_size(array $project, array $agent): int {
+    $dir = agent_transcript_dir($project, $agent);
+    if ($dir === null) return 0;
+    $files = glob($dir . '/*.jsonl');
+    if (!$files) return 0;
+    usort($files, fn($a, $b) => filemtime($b) <=> filemtime($a));
+    $lines = @file($files[0], FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    for ($i = count($lines) - 1; $i >= 0; $i--) {
+        $u = _usage_from_line($lines[$i]);
+        if ($u === null) continue;
+        $ctx = (int)($u['input_tokens'] ?? 0)
+             + (int)($u['cache_read_input_tokens'] ?? 0)
+             + (int)($u['cache_creation_input_tokens'] ?? 0);
+        if ($ctx > 0) return $ctx;
+    }
+    return 0;
+}
+
+/**
+ * Lifetime token totals for an agent across all its transcripts. Returns
+ * ['input'=>, 'output'=>, 'cache_read'=>, 'cache_write'=>, 'sessions'=>].
+ */
+function agent_token_usage(array $project, array $agent): array {
+    $totals = ['input' => 0, 'output' => 0, 'cache_read' => 0, 'cache_write' => 0, 'sessions' => 0];
+    $dir = agent_transcript_dir($project, $agent);
+    if ($dir === null) return $totals;
+    foreach (glob($dir . '/*.jsonl') as $f) {
+        $totals['sessions']++;
+        foreach (@file($f, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            $u = _usage_from_line($line);
+            if ($u === null) continue;
+            $totals['input']      += (int)($u['input_tokens'] ?? 0);
+            $totals['output']     += (int)($u['output_tokens'] ?? 0);
+            $totals['cache_read'] += (int)($u['cache_read_input_tokens'] ?? 0);
+            $totals['cache_write']+= (int)($u['cache_creation_input_tokens'] ?? 0);
+        }
+    }
+    return $totals;
+}
+
+/* --- shared wrap-down (used by the web handler and the daemon) ------------- */
+
+/**
+ * Send /wrap-up, wait (bounded) for SESSION.md to be (re)written, then kill the
+ * session. Returns ['updated'=>bool, 'killed'=>bool, 'reason'=>string].
+ */
+function perform_wrapdown(array $project, array $agent, int $waitSeconds = 90): array {
+    $tmux = $agent['tmux'];
+    if (!tmux_session_exists($tmux)) {
+        return ['updated' => false, 'killed' => false, 'reason' => 'not running'];
+    }
+    $sessionMd = agent_dir($project, $agent) . '/SESSION.md';
+    $before = file_exists($sessionMd) ? filemtime($sessionMd) : null;
+
+    run_cmd(['tmux', 'send-keys', '-t', $tmux, '/wrap-up', 'Enter']);
+
+    $updated = false;
+    $deadline = time() + $waitSeconds;
+    while (time() < $deadline) {
+        clearstatcache(true, $sessionMd);
+        if (file_exists($sessionMd)) {
+            $m = filemtime($sessionMd);
+            if ($before === null || $m > $before) { $updated = true; break; }
+        }
+        sleep(1);
+    }
+
+    run_cmd(['tmux', 'kill-session', '-t', $tmux]);
+    return ['updated' => $updated, 'killed' => true, 'reason' => $updated ? 'wrapped' : 'timeout'];
 }
 
 function render_header(string $title): void {

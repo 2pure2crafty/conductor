@@ -8,14 +8,21 @@ phone browser. A small private PHP app.
 
 ## The problem it solves
 
-Leaving a Claude Code session running 24/7 so it's there when you want it burns
-tokens while it sits idle, and it chains you to the terminal. Conductor replaces
-"always-on agents" with "on-demand agents": you open a small private web app from
-your phone, spin up the agent you want, and it hands you off to the Claude mobile
-app (via `/remote-control`) to do the actual work. When you're done, `/wrap-up`
-writes a `SESSION.md` handoff and the session is killed. The next spin-up reads
-that handoff and picks up where you left off. Persistent *information*, not
-persistent *agents*.
+Leaving a Claude Code session running 24/7 so it's there when you want it chains
+you to the terminal, and it quietly runs up the cost of *reviving* it. An idle
+session doesn't burn tokens while it truly sits idle, but two things make a
+long-lived session expensive to come back to: its context keeps growing, so
+every turn re-reads more, and the prompt cache expires after a few minutes of
+inactivity, so the next message pays a full cold rebuild of that whole
+accumulated context. The longer it lives, the more each revival costs.
+
+Conductor replaces "always-on agents" with "on-demand agents": you open a small
+private web app from your phone, spin up the agent you want, and it hands you off
+to the Claude mobile app (via `/remote-control`) to do the actual work. When
+you're done, `/wrap-up` writes a compact `SESSION.md` handoff and the session is
+killed. The next spin-up reads that small handoff and picks up where you left
+off, instead of paying to rebuild a large stale context. Persistent
+*information*, not persistent *agents*.
 
 ## What it does
 
@@ -30,6 +37,11 @@ persistent *agents*.
   `SESSION.md` exists, summarizes where things stand and the next step.
 - Wrap down: send `/wrap-up`, wait for the `SESSION.md` handoff to be written,
   then kill the tmux session.
+- An always-on **daemon** (`conductor-daemon.service`) that watches opted-in
+  agents and auto-wraps-down ones whose context has grown large and then gone
+  idle, so a big stale session doesn't sit around costing a full cold rebuild to
+  revive. Ships safe: dry-run by default (logs, kills nothing) and per-agent
+  opt-in. See "The daemon" below.
 
 ## Why it's called Conductor
 
@@ -108,6 +120,45 @@ tmux names), not code.
    every sub-page (`/conductor/project.php`, etc.) 404s. If you must mount under
    a sub-path, use a reverse proxy that forwards the whole subtree (nginx
    `location /conductor/ { proxy_pass ...; }`) and set `CONDUCTOR_BASE_PATH`.
+
+6. **(Optional) The daemon.** Install the always-on watcher:
+   ```bash
+   sudo cp conductor-daemon.service.example /etc/systemd/system/conductor-daemon.service
+   sudo nano /etc/systemd/system/conductor-daemon.service   # set User/Group/path
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now conductor-daemon.service
+   ```
+   The daemon config keys live in the same `/etc/default/conductor` file
+   (`CONDUCTOR_IDLE_TIMEOUT`, `CONDUCTOR_WRAPDOWN_MIN_CONTEXT`,
+   `CONDUCTOR_DAEMON_DRYRUN`, etc.). See "The daemon" below before arming it.
+
+## The daemon
+
+`conductor-daemon.php` (run by `conductor-daemon.service`) is an always-on
+watcher, one level of automation below the web UI. Each cycle it looks at every
+opted-in agent and decides whether to auto-wrap-down.
+
+**When it acts.** Only when BOTH hold: the agent's live context has grown past
+`CONDUCTOR_WRAPDOWN_MIN_CONTEXT` (default 100k tokens), AND it has then sat idle
+past `CONDUCTOR_IDLE_TIMEOUT` (default 240s). The size gate is the real trigger;
+idle is the secondary timer. The reasoning: wrapping down costs a summary turn
+and loses conversational fidelity, and the saving scales with context size, so
+it is only worth it once the context is large enough that reviving it later would
+cost a big cold cache rebuild. A small idle session is left alone.
+
+**How it reads context size.** From Claude Code's transcripts under
+`CONDUCTOR_TRANSCRIPTS_DIR`: the latest turn's input + cache-read + cache-write
+tokens. Read-only.
+
+**Two safety layers, both on by default:**
+1. **Dry-run** (`CONDUCTOR_DAEMON_DRYRUN=1`): logs every decision to
+   `/var/log/conductor/daemon.log` but kills nothing. Watch the log, and once
+   you trust its calls, set `CONDUCTOR_DAEMON_DRYRUN=0`.
+2. **Per-agent opt-in**: it only ever touches agents with `"auto_wrapdown": true`
+   in `registry.json`. Nothing is armed until you set that on an agent.
+
+It never wraps down an agent that is mid-response or waiting on a permission
+prompt. `journalctl -u conductor-daemon` or the log file shows what it's doing.
 
 ## Requirements on the target server
 
