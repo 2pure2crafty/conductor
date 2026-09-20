@@ -178,17 +178,66 @@ function agent_dir(array $project, array $agent): string {
     return rtrim($project['path'], '/') . '/' . $agent['path'];
 }
 
-/** Run a command with argv-array (no shell interpolation). Returns [exitCode, stdout, stderr]. */
-function run_cmd(array $argv, ?string $cwd = null): array {
-    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+/**
+ * Run a command with argv-array (no shell interpolation). Optionally feed $stdin
+ * and enforce a wall-clock $timeout (seconds, 0 = none). Returns
+ * [exitCode, stdout, stderr]. On timeout: exit 124, whatever was captured, and a
+ * "timeout" note on stderr.
+ */
+function run_cmd(array $argv, ?string $cwd = null, string $stdin = '', int $timeout = 0): array {
+    $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
     $proc = proc_open($argv, $descriptors, $pipes, $cwd);
     if (!is_resource($proc)) return [1, '', 'failed to start process'];
-    $stdout = stream_get_contents($pipes[1]);
-    $stderr = stream_get_contents($pipes[2]);
+
+    if ($stdin !== '') fwrite($pipes[0], $stdin);
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $stdout = '';
+    $stderr = '';
+    $deadline = $timeout > 0 ? microtime(true) + $timeout : 0;
+    while (true) {
+        $stdout .= stream_get_contents($pipes[1]);
+        $stderr .= stream_get_contents($pipes[2]);
+        $status = proc_get_status($proc);
+        if (!$status['running']) break;
+        if ($deadline && microtime(true) > $deadline) {
+            proc_terminate($proc, 9);
+            $stdout .= stream_get_contents($pipes[1]);
+            $stderr .= stream_get_contents($pipes[2]) . "\n[timeout]";
+            fclose($pipes[1]); fclose($pipes[2]); proc_close($proc);
+            return [124, $stdout, $stderr];
+        }
+        usleep(50000);
+    }
+    $stdout .= stream_get_contents($pipes[1]);
+    $stderr .= stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
     $exit = proc_close($proc);
     return [$exit, $stdout, $stderr];
+}
+
+/**
+ * One-shot reasoning via a headless Haiku (or configured model). Feeds $stdin,
+ * runs `claude --model <m> -p <prompt>` non-interactively, returns the trimmed
+ * stdout text, or null on failure/timeout. The daemon does the file I/O itself,
+ * so this call only reasons: no filesystem access, no permission prompt, no
+ * session. Reuses the host's existing Claude Code auth (no API key needed).
+ */
+function daemon_reason(string $prompt, string $stdin = '', ?int $timeout = null): ?string {
+    $model = conductor_config_get('CONDUCTOR_REASON_MODEL', 'haiku');
+    $timeout ??= (int) conductor_config_get('CONDUCTOR_REASON_TIMEOUT', '120');
+    [$exit, $out, $err] = run_cmd(
+        ['claude', '--model', $model, '-p', $prompt],
+        null,
+        $stdin,
+        $timeout
+    );
+    if ($exit !== 0) return null;
+    $out = trim($out);
+    return $out === '' ? null : $out;
 }
 
 function tmux_running_sessions(): array {
