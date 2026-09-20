@@ -1,5 +1,7 @@
 # Conductor
 
+> **Note:** This repository is no longer maintained. Its code and service have been consolidated into a larger project, [D'everyman](https://github.com/2pure2crafty/deveryman).
+
 Conductor spins Claude Code agent sessions up and down on demand, driven from a
 phone browser. A small private PHP app.
 
