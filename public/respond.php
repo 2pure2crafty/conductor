@@ -23,11 +23,11 @@ if (!tmux_session_exists($agent['tmux'])) {
 }
 
 if ($action === 'approve') {
-    // Default-highlighted option (usually "Yes") — plain Enter selects it.
+    // Default-highlighted option (usually "Yes") - plain Enter selects it.
     run_cmd(['tmux', 'send-keys', '-t', $agent['tmux'], 'Enter']);
 } elseif ($action === 'deny') {
     // "No" is reliably the last item in Claude Code's permission menu; walk down to it.
-    // Keystrokes need spacing out — sent back-to-back, the TUI's redraw can drop one.
+    // Keystrokes need spacing out - sent back-to-back, the TUI's redraw can drop one.
     $optionCount = max(1, (int)($_POST['option_count'] ?? 3));
     for ($i = 0; $i < $optionCount - 1; $i++) {
         run_cmd(['tmux', 'send-keys', '-t', $agent['tmux'], 'Down']);

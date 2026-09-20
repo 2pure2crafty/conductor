@@ -13,7 +13,7 @@ if (!empty($pending)) {
     echo '<h1>Needs attention</h1>';
     foreach ($pending as $p) {
         echo '<div class="card" style="border-color:#b45309">';
-        echo '<strong>' . h($p['projectLabel'] . ' — ' . $p['agentLabel']) . '</strong>';
+        echo '<strong>' . h($p['projectLabel'] . ' - ' . $p['agentLabel']) . '</strong>';
         echo '<div class="desc">' . h($p['prompt']['question']) . '</div>';
         echo '<div class="desc">' . implode(' / ', array_map('h', $p['prompt']['options'])) . '</div>';
         echo '<form method="post" action="respond.php" style="margin-top:8px">';

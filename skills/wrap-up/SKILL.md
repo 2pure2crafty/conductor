@@ -35,7 +35,7 @@ project keeps a lossless record of every session instead of losing older context
 to each overwrite. Create `memory/` and the file if they don't exist.
 
 - **Prepend** the new entry at the TOP of the file (newest first), under a
-  heading like `## <YYYY-MM-DD HH:MM> — <one-line title>`.
+  heading like `## <YYYY-MM-DD HH:MM> - <one-line title>`.
 - Never edit or delete existing entries. This log is append-only and is the
   source of truth that condensed summaries are derived from.
 - The entry can be the same content as SESSION.md, or slightly fuller if there is

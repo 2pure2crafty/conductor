@@ -10,7 +10,7 @@ $isNewProject = ($project === null);
 
 render_header($isNewProject ? 'New project' : 'Spin up agent');
 echo '<a class="back" href="' . ($isNewProject ? 'index.php' : 'project.php?slug=' . h($projectSlug)) . '">&larr; Back</a>';
-echo '<h1>' . ($isNewProject ? 'New project' : h('Spin up agent — ' . $project['label'])) . '</h1>';
+echo '<h1>' . ($isNewProject ? 'New project' : h('Spin up agent - ' . $project['label'])) . '</h1>';
 
 echo '<form method="post" action="spawn.php">';
 
@@ -44,9 +44,9 @@ echo '<label>Model<select name="model">'
     . '<option value="fable">fable</option>'
     . '</select></label>';
 echo '<label>Permission mode<select name="permission_mode">'
-    . '<option value="">default (prompts for everything — you approve each tool call live)</option>'
+    . '<option value="">default (prompts for everything - you approve each tool call live)</option>'
     . '<option value="acceptEdits" selected>acceptEdits (file edits auto-approved, e.g. /wrap-up; other tools still prompt)</option>'
-    . '<option value="auto">auto (fully autonomous within this agent\'s settings.json allow-list — same as the pipeline agents)</option>'
+    . '<option value="auto">auto (fully autonomous within this agent\'s settings.json allow-list - same as the pipeline agents)</option>'
     . '</select></label>';
 echo '</div>';
 
