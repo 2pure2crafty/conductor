@@ -1,3 +1,22 @@
-# Live registry: created per-deployment from registry.example.json, holds this
-# server's real projects/agents. Not part of the shippable code.
+# Per-deployment state and secrets. The repo ships only generic code plus the
+# *.example templates; anything server-specific stays out of git.
+
+# Live registry: this server's real projects/agents (paths, tmux names).
+# Created at deploy time from registry.example.json.
 /registry.json
+
+# Real config / secrets, if ever copied into the repo dir instead of /etc/default.
+# The shipped template is conductor.env.example; the filled-in copy is never committed.
+conductor.env
+.env
+*.local
+*.local.*
+/config.local.*
+
+# Session handoffs and agent transcripts, if any ever land in the repo dir.
+SESSION.md
+agent-*.jsonl
+
+# Editor / OS noise
+*.swp
+.DS_Store
