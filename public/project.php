@@ -67,7 +67,19 @@ foreach ($project['agents'] as $agentSlug => $agent) {
     }
 
     if ($isLive) {
-        echo '<form method="post" action="wrapdown.php" onsubmit="return confirm(\'Send /wrap-up and stop this session?\');">'
+        $sessionUrl = agent_session_url($agent['tmux']);
+        if ($sessionUrl !== null) {
+            echo '<a class="btn" href="' . h($sessionUrl) . '">Open in Claude app</a>';
+        }
+        echo '<a class="btn" style="background:#444" href="peek.php?project=' . h($slug)
+            . '&amp;agent=' . h($agentSlug) . '">Peek</a>';
+        // Quick nudge
+        echo '<form method="post" action="nudge.php" style="margin-top:8px">'
+            . '<input type="hidden" name="project" value="' . h($slug) . '">'
+            . '<input type="hidden" name="agent" value="' . h($agentSlug) . '">'
+            . '<input type="text" name="message" placeholder="Quick nudge (sends a message)">'
+            . '<button class="btn" type="submit" style="margin-top:6px">Send</button></form>';
+        echo '<form method="post" action="wrapdown.php" onsubmit="return confirm(\'Send /wrap-up and stop this session?\');" style="margin-top:8px">'
             . '<input type="hidden" name="project" value="' . h($slug) . '">'
             . '<input type="hidden" name="agent" value="' . h($agentSlug) . '">'
             . '<button class="btn stop" type="submit">Wrap up &amp; stop</button></form>';

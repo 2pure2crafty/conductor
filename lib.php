@@ -511,6 +511,8 @@ function render_header(string $title): void {
     echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . ($basePath !== '' ? '<base href="' . h($basePath) . '">' : '')
+        . '<link rel="manifest" href="manifest.webmanifest">'
+        . '<meta name="theme-color" content="#111111">'
         . '<title>' . h($title) . ' - Conductor</title><style>'
         . 'body{font-family:system-ui,sans-serif;max-width:640px;margin:0 auto;padding:16px;background:#111;color:#eee}'
         . 'a{color:#7ab8ff}'
@@ -572,6 +574,22 @@ function estimate_cost(array $usage, string $model): float {
 /** HTML status badge span for one of working/idle/attention/stopped. */
 function status_badge(string $status): string {
     return '<span class="status ' . h($status) . '">' . h($status) . '</span>';
+}
+
+/** Last N lines of a live agent's tmux pane (read-only), or '' if not running. */
+function agent_pane_tail(string $tmux, int $lines = 20): string {
+    if (!tmux_session_exists($tmux)) return '';
+    [$exit, $out] = run_cmd(['tmux', 'capture-pane', '-t', $tmux, '-p', '-S', '-' . $lines]);
+    return $exit === 0 ? rtrim($out) : '';
+}
+
+/** The Remote Control session URL for a live agent, scraped from scrollback, or null. */
+function agent_session_url(string $tmux): ?string {
+    if (!tmux_session_exists($tmux)) return null;
+    [$exit, $out] = run_cmd(['tmux', 'capture-pane', '-t', $tmux, '-p', '-S', '-400']);
+    if ($exit !== 0) return null;
+    if (preg_match('#https://claude\.ai/code/session_[A-Za-z0-9]+#', $out, $m)) return $m[0];
+    return null;
 }
 
 function build_claude_md(string $agentLabel, string $projectDescription, string $instructions): string {
