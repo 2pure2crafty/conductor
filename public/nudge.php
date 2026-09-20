@@ -31,6 +31,7 @@ if ($message === '') error_page('Empty message.', 'project.php?slug=' . $project
 run_cmd(['tmux', 'send-keys', '-t', $agent['tmux'], $message]);
 usleep(400000);
 run_cmd(['tmux', 'send-keys', '-t', $agent['tmux'], 'Enter']);
+audit_log('nudge', $agent['tmux'] . ': ' . mb_substr($message, 0, 80));
 
 header('Location: project.php?slug=' . rawurlencode($projectSlug));
 exit;

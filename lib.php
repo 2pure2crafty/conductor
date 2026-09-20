@@ -117,6 +117,19 @@ function conductor_dashboard_url(): string {
     return conductor_config_get('CONDUCTOR_DASHBOARD_URL', '');
 }
 
+/** Append-only audit log path (spin-ups, wrap-downs, deletes, etc.). */
+function conductor_audit_log(): string {
+    return conductor_config_get('CONDUCTOR_AUDIT_LOG', '/var/log/conductor/audit.log');
+}
+
+/** Append one timestamped, tab-separated audit line. Best-effort. */
+function audit_log(string $event, string $detail = ''): void {
+    $f = conductor_audit_log();
+    if (!is_dir(dirname($f))) @mkdir(dirname($f), 0755, true);
+    $line = date('Y-m-d H:i:s') . "\t" . $event . "\t" . str_replace(["\t", "\n"], ' ', $detail) . "\n";
+    @file_put_contents($f, $line, FILE_APPEND);
+}
+
 /**
  * URL path the app is mounted under, e.g. "/conductor/" when reverse-proxied at
  * a sub-path (Tailscale serve --set-path). Emitted as a <base> tag so the app's
@@ -503,6 +516,7 @@ function perform_wrapdown(array $project, array $agent, int $waitSeconds = 90): 
     }
 
     run_cmd(['tmux', 'kill-session', '-t', $tmux]);
+    audit_log('wrapdown', $tmux . ' ' . ($updated ? 'wrapped' : 'timeout-killed'));
     return ['updated' => $updated, 'killed' => true, 'reason' => $updated ? 'wrapped' : 'timeout'];
 }
 
@@ -670,6 +684,7 @@ function spawn_tmux_agent(string $tmuxName, string $agentDirAbs, string $model, 
 
     exec('nohup bash ' . escapeshellarg(SPAWN_FINISH_SCRIPT) . ' ' . escapeshellarg($tmuxName)
         . ' > /dev/null 2>&1 &');
+    audit_log('spawn', $tmuxName . ' model=' . ($model ?: 'auto') . ' perm=' . ($permissionMode ?: 'default'));
 }
 
 function render_spawn_confirmation(string $tmuxName, string $backHref): void {

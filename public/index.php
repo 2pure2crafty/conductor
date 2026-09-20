@@ -48,4 +48,5 @@ foreach ($registry['projects'] as $slug => $project) {
 }
 
 echo '<a class="btn" href="spawn-form.php">+ New project</a>';
+echo '<a class="btn" style="background:#444" href="audit.php">Audit log</a>';
 render_footer();

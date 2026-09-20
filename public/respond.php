@@ -37,6 +37,7 @@ if ($action === 'approve') {
 } else {
     error_page('Unknown action.', 'index.php');
 }
+audit_log('respond', $agent['tmux'] . ' ' . $action);
 
 header('Location: index.php');
 exit;

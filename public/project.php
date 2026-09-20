@@ -95,4 +95,5 @@ if ($projTotals['sessions'] > 0) {
 }
 
 echo '<a class="btn" href="spawn-form.php?project=' . h($slug) . '">Spin up agent</a>';
+echo '<a class="btn" style="background:#444" href="manage.php?slug=' . h($slug) . '">Manage</a>';
 render_footer();
