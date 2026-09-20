@@ -398,11 +398,19 @@ function render_footer(): void {
 function build_claude_md(string $agentLabel, string $projectDescription, string $instructions): string {
     $md = "# {$agentLabel}\n\n"
         . "## Session handoff\n\n"
-        . "Before doing anything else, check whether `SESSION.md` exists in this directory.\n"
-        . "If it does, read it first, it has the state from your last session with Patch.\n"
-        . "Treat it as a briefing to get oriented quickly, not a script to follow blindly.\n\n"
-        . "When Patch runs `/wrap-up`, write a fresh handoff to `SESSION.md` following the\n"
-        . "instructions in that skill.\n\n"
+        . "This project keeps its memory in layers. On startup, read them in order and stop\n"
+        . "as soon as you have enough to work, you rarely need all of them:\n\n"
+        . "1. `SESSION.md` (project root): the latest handoff, where the last session left\n"
+        . "   off and the next step. Always read this first. Usually enough.\n"
+        . "2. `memory/DIGEST.md`: a condensed summary of older history. Read it if you need\n"
+        . "   more background than SESSION.md gives.\n"
+        . "3. `memory/HISTORY.md`: the full append-only log of every past handoff. Grep or\n"
+        . "   skim it only when you need a specific detail the digest dropped.\n"
+        . "4. `memory/archive/`: superseded versions and rotated-out history. Read only on\n"
+        . "   explicit need.\n\n"
+        . "Treat these as a briefing to get oriented quickly, not a script to follow blindly.\n\n"
+        . "When Patch runs `/wrap-up`, write a fresh handoff to `SESSION.md` AND append it to\n"
+        . "`memory/HISTORY.md`, following the instructions in that skill.\n\n"
         . "---\n\n";
     if (trim($projectDescription) !== '') {
         $md .= "## Project context\n\n" . trim($projectDescription) . "\n\n";
