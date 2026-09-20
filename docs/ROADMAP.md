@@ -1,5 +1,10 @@
 # Conductor roadmap
 
+> **Status: the whole roadmap below has now been built and shipped.** Features
+> #1-#11 are implemented, verified, committed, and running. See `REVIEW.md` for
+> what shipped, what surfaced during the build, and recommended next steps. This
+> file is kept as the design reference for each feature.
+
 Specs for the next round of features. Each entry: what it does, how it fits the
 current code, rough effort, and dependencies. Ordered by value, not build order.
 

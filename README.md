@@ -42,6 +42,14 @@ off, instead of paying to rebuild a large stale context. Persistent
   idle, so a big stale session doesn't sit around costing a full cold rebuild to
   revive. Ships safe: dry-run by default (logs, kills nothing) and per-agent
   opt-in. See "The daemon" below.
+- **Tiered memory** so context survives without bloating: `/wrap-up` keeps the
+  latest handoff in `SESSION.md` and appends every handoff to an append-only
+  `memory/HISTORY.md`; the daemon condenses history into `memory/DIGEST.md` via a
+  one-shot Haiku. Agents read SESSION -> DIGEST -> HISTORY on demand.
+- **Token tracking** per agent and project (totals + estimated cost, live context
+  size), **push notifications** when an agent needs attention, a **pane peek**, a
+  **quick-nudge** box, **registry management** (arm auto-wrap-down, delete, edit
+  CLAUDE.md, version summaries), an **audit log**, and an installable **PWA**.
 
 ## Why it's called Conductor
 
